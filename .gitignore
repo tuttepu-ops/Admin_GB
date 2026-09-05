@@ -1,0 +1,13 @@
+node_modules
+.next
+.env
+.env.local
+.vercel
+.DS_Store
+.env
+.env.local
+.env.production
+node_modules/
+.next/
+.vercel/
+

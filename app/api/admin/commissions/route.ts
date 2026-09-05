@@ -1,0 +1,5 @@
+import {NextRequest,NextResponse} from 'next/server';
+import {requireAdmin} from '../../../../lib/admin-auth';
+import {supabaseAdmin} from '../../../../lib/supabase-server';
+const allowed=['none','pending','approved','paid','cancelled'];
+export async function PATCH(req:NextRequest){try{await requireAdmin(req);const {order_id,status}=await req.json();if(!order_id||!allowed.includes(status))return NextResponse.json({error:'Invalid commission update'},{status:400});const db=supabaseAdmin();const patch:any={referral_commission_status:status,updated_at:new Date().toISOString()};if(status==='paid')patch.referral_commission_paid_at=new Date().toISOString();else if(status!=='paid')patch.referral_commission_paid_at=null;const {data,error}=await db.from('orders').update(patch).eq('id',order_id).select('*').single();if(error)throw new Error(error.message);return NextResponse.json(data);}catch(e){const status=(e as Error&{status?:number}).status||500;return NextResponse.json({error:(e as Error).message},{status});}}

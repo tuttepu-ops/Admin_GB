@@ -1,0 +1,4 @@
+import {NextRequest,NextResponse} from 'next/server';
+import {requireAdmin} from '../../../../../lib/admin-auth';
+import {supabaseAdmin} from '../../../../../lib/supabase-server';
+export async function POST(req:NextRequest){try{const who=await requireAdmin(req);const {token,device_name,platform,browser}=await req.json();if(!token)return NextResponse.json({error:'FCM token required'},{status:400});const db=supabaseAdmin();const {data,error}=await db.from('admin_push_devices').upsert({admin_user_id:who.user.id,fcm_token:token,device_name:device_name||null,platform:platform||'web',browser:browser||null,active:true,last_seen_at:new Date().toISOString(),updated_at:new Date().toISOString()},{onConflict:'fcm_token'}).select('*').single();if(error)throw new Error(error.message);return NextResponse.json(data);}catch(e){const status=(e as Error&{status?:number}).status||500;return NextResponse.json({error:(e as Error).message},{status});}}
