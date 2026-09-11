@@ -21,58 +21,101 @@ function money(value: number) {
 
 export async function POST(req: NextRequest) {
   try {
-    const configuredSecret = process.env.ADMIN_PUSH_WEBHOOK_SECRET;
-    const providedSecret = req.headers.get('x-gb-push-secret');
+    const configuredSecret =
+      process.env.ADMIN_PUSH_WEBHOOK_SECRET;
+
+    const providedSecret =
+      req.headers.get('x-gb-push-secret');
 
     if (!configuredSecret) {
       return NextResponse.json(
-        { error: 'ADMIN_PUSH_WEBHOOK_SECRET is not configured' },
+        {
+          error:
+            'ADMIN_PUSH_WEBHOOK_SECRET is not configured',
+        },
         { status: 500 }
       );
     }
 
-    if (!providedSecret || providedSecret !== configuredSecret) {
+    if (
+      !providedSecret ||
+      providedSecret !== configuredSecret
+    ) {
       return NextResponse.json(
-        { error: 'Unauthorized push request' },
+        {
+          error: 'Unauthorized push request',
+        },
         { status: 401 }
       );
     }
 
-    const body = (await req.json()) as Partial<Payload>;
+    const body =
+      (await req.json()) as Partial<Payload>;
 
-    const orderId = String(body.orderId || '').trim();
-    const orderNumber = String(body.orderNumber || '').trim();
-    const customerName = String(
-      body.customerName || 'Customer'
-    ).trim();
+    const orderId =
+      String(body.orderId || '').trim();
 
-    const totalAmount = Number(body.totalAmount || 0);
-    const itemCount = Number(body.itemCount || 0);
+    const orderNumber =
+      String(body.orderNumber || '').trim();
+
+    const customerName =
+      String(
+        body.customerName || 'Customer'
+      ).trim();
+
+    const totalAmount =
+      Number(body.totalAmount || 0);
+
+    const itemCount =
+      Number(body.itemCount || 0);
 
     if (!orderId || !orderNumber) {
       return NextResponse.json(
-        { error: 'Order notification data is incomplete' },
+        {
+          error:
+            'Order notification data is incomplete',
+        },
         { status: 400 }
       );
     }
 
     const db = supabaseAdmin();
 
-    const title = `New Order ${orderNumber}`;
-    const notificationBody =
-      `${customerName} · ${itemCount} items · ${money(totalAmount)}`;
+    const title =
+      `New Order ${orderNumber}`;
 
-    // Claim first so duplicate webhook calls cannot send twice.
-    const { data: notificationClaim, error: claimError } =
+    const notificationBody =
+      `${customerName} · ${itemCount} items · ${money(
+        totalAmount
+      )}`;
+
+    // -------------------------------------------------------
+    // CLAIM NOTIFICATION FIRST
+    //
+    // Requires unique index on:
+    // (order_id, notification_type)
+    // WHERE notification_type = 'new_order'
+    // -------------------------------------------------------
+
+    const {
+      data: notificationClaim,
+      error: claimError,
+    } =
       await db
         .from('notification_logs')
         .insert({
           notification_type: 'new_order',
+
           title,
+
           body: notificationBody,
+
           order_id: orderId,
+
           provider: 'fcm',
+
           status: 'processing',
+
           metadata: {
             order_number: orderNumber,
             customer_name: customerName,
@@ -97,19 +140,33 @@ export async function POST(req: NextRequest) {
         });
       }
 
-      throw new Error(claimError.message);
+      throw new Error(
+        claimError.message
+      );
     }
 
     if (!notificationClaim?.id) {
-      throw new Error('Unable to create notification claim');
+      throw new Error(
+        'Unable to create notification claim'
+      );
     }
 
-    const notificationLogId = notificationClaim.id;
+    const notificationLogId =
+      notificationClaim.id;
 
-    const { data: devices, error: deviceError } =
+    // -------------------------------------------------------
+    // GET ACTIVE ADMIN DEVICES
+    // -------------------------------------------------------
+
+    const {
+      data: devices,
+      error: deviceError,
+    } =
       await db
         .from('admin_push_devices')
-        .select('id,admin_user_id,fcm_token')
+        .select(
+          'id,admin_user_id,fcm_token'
+        )
         .eq('active', true);
 
     if (deviceError) {
@@ -117,11 +174,18 @@ export async function POST(req: NextRequest) {
         .from('notification_logs')
         .update({
           status: 'failed',
-          error_message: deviceError.message,
-        })
-        .eq('id', notificationLogId);
 
-      throw new Error(deviceError.message);
+          error_message:
+            deviceError.message,
+        })
+        .eq(
+          'id',
+          notificationLogId
+        );
+
+      throw new Error(
+        deviceError.message
+      );
     }
 
     if (!devices?.length) {
@@ -129,60 +193,99 @@ export async function POST(req: NextRequest) {
         .from('notification_logs')
         .update({
           status: 'failed',
+
           error_message:
             'No active admin push devices registered',
         })
-        .eq('id', notificationLogId);
+        .eq(
+          'id',
+          notificationLogId
+        );
 
       return NextResponse.json({
         ok: false,
         sent: 0,
         failed: 0,
-        error: 'No active admin push devices registered',
+
+        error:
+          'No active admin push devices registered',
       });
     }
 
-    const messaging = firebaseMessagingAdmin();
+    // -------------------------------------------------------
+    // SEND FIREBASE PUSH
+    // -------------------------------------------------------
+
+    const messaging =
+      firebaseMessagingAdmin();
 
     let sent = 0;
     let failed = 0;
 
-    let firstSuccessfulMessageId: string | null = null;
-    let firstSuccessfulAdminId: string | null = null;
-    let firstSuccessfulDeviceId: string | null = null;
+    let firstSuccessfulMessageId:
+      | string
+      | null = null;
 
-    let lastError: string | null = null;
+    let firstSuccessfulAdminId:
+      | string
+      | null = null;
+
+    let firstSuccessfulDeviceId:
+      | string
+      | null = null;
+
+    let lastError:
+      | string
+      | null = null;
 
     for (const device of devices) {
       try {
-        const providerMessageId = await messaging.send({
-          token: device.fcm_token,
+        const providerMessageId =
+          await messaging.send({
+            token:
+              device.fcm_token,
 
-          // IMPORTANT:
-          // data-only payload.
-          // Service worker will display exactly one notification.
-          data: {
-            title,
-            body: notificationBody,
-            url: '/admin',
-            order_id: orderId,
-            order_number: orderNumber,
-            notification_type: 'new_order',
-          },
-
-          webpush: {
-            headers: {
-              Urgency: 'high',
+            // Firebase/browser will display
+            // this notification automatically.
+            notification: {
+              title,
+              body:
+                notificationBody,
             },
-          },
-        });
+
+            data: {
+              url: '/admin',
+
+              order_id:
+                orderId,
+
+              order_number:
+                orderNumber,
+
+              notification_type:
+                'new_order',
+            },
+
+            webpush: {
+              fcmOptions: {
+                link: '/admin',
+              },
+            },
+          });
 
         sent += 1;
 
-        if (!firstSuccessfulMessageId) {
-          firstSuccessfulMessageId = providerMessageId;
-          firstSuccessfulAdminId = device.admin_user_id;
-          firstSuccessfulDeviceId = device.id;
+        if (
+          !firstSuccessfulMessageId
+        ) {
+          firstSuccessfulMessageId =
+            providerMessageId;
+
+          firstSuccessfulAdminId =
+            device.admin_user_id;
+
+          firstSuccessfulDeviceId =
+            device.id;
         }
 
         console.log(
@@ -205,45 +308,87 @@ export async function POST(req: NextRequest) {
       }
     }
 
+    // -------------------------------------------------------
+    // UPDATE LOG
+    // -------------------------------------------------------
+
     if (sent > 0) {
       await db
         .from('notification_logs')
         .update({
-          recipient_admin_id: firstSuccessfulAdminId,
-          provider_message_id: firstSuccessfulMessageId,
+          recipient_admin_id:
+            firstSuccessfulAdminId,
+
+          provider_message_id:
+            firstSuccessfulMessageId,
+
           status: 'sent',
-          sent_at: new Date().toISOString(),
+
+          sent_at:
+            new Date().toISOString(),
+
           error_message: null,
 
           metadata: {
-            device_id: firstSuccessfulDeviceId,
-            order_number: orderNumber,
-            customer_name: customerName,
-            total_amount: totalAmount,
-            item_count: itemCount,
-            devices_sent: sent,
-            devices_failed: failed,
+            device_id:
+              firstSuccessfulDeviceId,
+
+            order_number:
+              orderNumber,
+
+            customer_name:
+              customerName,
+
+            total_amount:
+              totalAmount,
+
+            item_count:
+              itemCount,
+
+            devices_sent:
+              sent,
+
+            devices_failed:
+              failed,
           },
         })
-        .eq('id', notificationLogId);
+        .eq(
+          'id',
+          notificationLogId
+        );
     } else {
       await db
         .from('notification_logs')
         .update({
           status: 'failed',
+
           error_message:
-            lastError || 'Unable to send notification',
+            lastError ||
+            'Unable to send notification',
 
           metadata: {
-            order_number: orderNumber,
-            customer_name: customerName,
-            total_amount: totalAmount,
-            item_count: itemCount,
+            order_number:
+              orderNumber,
+
+            customer_name:
+              customerName,
+
+            total_amount:
+              totalAmount,
+
+            item_count:
+              itemCount,
+
             devices_sent: 0,
-            devices_failed: failed,
+
+            devices_failed:
+              failed,
           },
         })
-        .eq('id', notificationLogId);
+        .eq(
+          'id',
+          notificationLogId
+        );
     }
 
     return NextResponse.json({
@@ -253,7 +398,10 @@ export async function POST(req: NextRequest) {
       failed,
     });
   } catch (error) {
-    console.error('NEW ORDER PUSH ERROR:', error);
+    console.error(
+      'NEW ORDER PUSH ERROR:',
+      error
+    );
 
     return NextResponse.json(
       {
@@ -262,7 +410,9 @@ export async function POST(req: NextRequest) {
             ? error.message
             : 'Unable to send new order notification',
       },
-      { status: 500 }
+      {
+        status: 500,
+      }
     );
   }
 }
