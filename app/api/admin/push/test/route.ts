@@ -1,38 +1,77 @@
-import { NextRequest, NextResponse } from 'next/server';
-import { requireAdmin } from '../../../../../lib/admin-auth';
-import { supabaseAdmin } from '../../../../../lib/supabase-server';
-import { firebaseMessagingAdmin } from '../../../../../lib/firebase-admin';
+import {
+  NextRequest,
+  NextResponse,
+} from 'next/server';
 
-export const dynamic = 'force-dynamic';
+import {
+  requireAdmin,
+} from '../../../../../lib/admin-auth';
 
-export async function POST(req: NextRequest) {
+import {
+  supabaseAdmin,
+} from '../../../../../lib/supabase-server';
+
+import {
+  firebaseMessagingAdmin,
+} from '../../../../../lib/firebase-admin';
+
+export const dynamic =
+  'force-dynamic';
+
+export async function POST(
+  req: NextRequest
+) {
   try {
-    const who = await requireAdmin(req);
-    const db = supabaseAdmin();
+    const who =
+      await requireAdmin(req);
 
-    const { data: devices, error } =
+    const db =
+      supabaseAdmin();
+
+    const {
+      data: devices,
+      error,
+    } =
       await db
-        .from('admin_push_devices')
-        .select('id,fcm_token')
-        .eq('admin_user_id', who.user.id)
-        .eq('active', true);
+        .from(
+          'admin_push_devices'
+        )
+        .select(
+          'id,fcm_token'
+        )
+        .eq(
+          'admin_user_id',
+          who.user.id
+        )
+        .eq(
+          'active',
+          true
+        );
 
     if (error) {
-      throw new Error(error.message);
+      throw new Error(
+        error.message
+      );
     }
 
     if (!devices?.length) {
       return NextResponse.json(
         {
-          error: 'No active push device registered',
+          error:
+            'No active push device registered',
         },
-        { status: 400 }
+        {
+          status: 400,
+        }
       );
     }
 
-    const messaging = firebaseMessagingAdmin();
+    const messaging =
+      firebaseMessagingAdmin();
 
-    const title = 'Godavari Basket Admin';
+    const title =
+      'Godavari Basket Admin';
+
     const notificationBody =
       'Push notifications are working correctly.';
 
@@ -43,19 +82,25 @@ export async function POST(req: NextRequest) {
       try {
         const providerMessageId =
           await messaging.send({
-            token: device.fcm_token,
+            token:
+              device.fcm_token,
 
-            // Data-only payload.
-            data: {
+            notification: {
               title,
-              body: notificationBody,
+              body:
+                notificationBody,
+            },
+
+            data: {
               url: '/admin',
-              notification_type: 'test',
+
+              notification_type:
+                'test',
             },
 
             webpush: {
-              headers: {
-                Urgency: 'high',
+              fcmOptions: {
+                link: '/admin',
               },
             },
           });
@@ -63,19 +108,34 @@ export async function POST(req: NextRequest) {
         sent += 1;
 
         await db
-          .from('notification_logs')
+          .from(
+            'notification_logs'
+          )
           .insert({
-            notification_type: 'test',
+            notification_type:
+              'test',
+
             title,
-            body: notificationBody,
-            recipient_admin_id: who.user.id,
+
+            body:
+              notificationBody,
+
+            recipient_admin_id:
+              who.user.id,
+
             provider: 'fcm',
-            provider_message_id: providerMessageId,
+
+            provider_message_id:
+              providerMessageId,
+
             status: 'sent',
-            sent_at: new Date().toISOString(),
+
+            sent_at:
+              new Date().toISOString(),
 
             metadata: {
-              device_id: device.id,
+              device_id:
+                device.id,
             },
           });
       } catch (error) {
@@ -87,18 +147,31 @@ export async function POST(req: NextRequest) {
             : 'Unable to send FCM message';
 
         await db
-          .from('notification_logs')
+          .from(
+            'notification_logs'
+          )
           .insert({
-            notification_type: 'test',
+            notification_type:
+              'test',
+
             title,
-            body: notificationBody,
-            recipient_admin_id: who.user.id,
+
+            body:
+              notificationBody,
+
+            recipient_admin_id:
+              who.user.id,
+
             provider: 'fcm',
+
             status: 'failed',
-            error_message: message,
+
+            error_message:
+              message,
 
             metadata: {
-              device_id: device.id,
+              device_id:
+                device.id,
             },
           });
       }
@@ -111,7 +184,11 @@ export async function POST(req: NextRequest) {
     });
   } catch (error) {
     const status =
-      (error as Error & { status?: number }).status || 500;
+      (
+        error as Error & {
+          status?: number;
+        }
+      ).status || 500;
 
     return NextResponse.json(
       {
@@ -120,7 +197,9 @@ export async function POST(req: NextRequest) {
             ? error.message
             : 'Unable to send test notification',
       },
-      { status }
+      {
+        status,
+      }
     );
   }
 }
