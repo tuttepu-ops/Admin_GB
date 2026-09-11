@@ -32,8 +32,120 @@ export default function Admin(){
  const nav=[['dashboard','Dashboard',BarChart3],['orders','Orders',ShoppingBag],['customers','Customers',Users],['payments','Payments',Clipboard],['coupons','Coupons',Tags],['influencers','Influencers',UserRoundCheck],['notifications','Notifications',Bell],['admin','Admin',ShieldCheck],['data','Data Management',Database]] as const;
  const authHeaders=()=>({'Authorization':`Bearer ${sessionToken}`,'Content-Type':'application/json'});
  const load=async(t=sessionToken)=>{if(!t)return;setLoading(true);setError('');try{const r=await fetch('/api/admin/bootstrap',{headers:{Authorization:`Bearer ${t}`},cache:'no-store'});const j=await r.json();if(!r.ok)throw new Error(j.error||'Unable to load admin data');setData(j.data);setAdmin(j.admin);setSessionToken(t);setLogged(true)}catch(e){setError((e as Error).message);setLogged(false)}finally{setLoading(false)}};
- useEffect(()=>{supabaseBrowser().auth.getSession().then(({data:{session}})=>{if(session?.access_token)load(session.access_token)});const {data:{subscription}}=supabaseBrowser().auth.onAuthStateChange((_e,s)=>{if(s?.access_token){setSessionToken(s.access_token);setLogged(true)}else{setLogged(false);setSessionToken('')}});return()=>subscription.unsubscribe()},[]);
- useEffect(()=>{if(!toast)return;const id=setTimeout(()=>setToast(''),2500);return()=>clearTimeout(id)},[toast]);
+ useEffect(() => {
+  supabaseBrowser()
+    .auth
+    .getSession()
+    .then(({ data: { session } }) => {
+      if (session?.access_token) {
+        load(session.access_token);
+      }
+    });
+
+  const {
+    data: { subscription },
+  } = supabaseBrowser()
+    .auth
+    .onAuthStateChange((_event, session) => {
+      if (session?.access_token) {
+        setSessionToken(
+          session.access_token
+        );
+
+        setLogged(true);
+      } else {
+        setLogged(false);
+        setSessionToken('');
+      }
+    });
+
+  return () => {
+    subscription.unsubscribe();
+  };
+}, []);
+
+
+/*
+ * Automatically refresh Admin data.
+ *
+ * 1. Refresh every 15 seconds.
+ * 2. Refresh immediately when returning to the app.
+ * 3. Refresh when the browser/PWA receives focus.
+ *
+ * This makes newly created orders appear automatically.
+ */
+useEffect(() => {
+  if (!logged || !sessionToken) {
+    return;
+  }
+
+  const refreshAdminData = () => {
+    load(sessionToken);
+  };
+
+  // Refresh every 15 seconds
+  const intervalId =
+    window.setInterval(
+      refreshAdminData,
+      15000
+    );
+
+  // Refresh when PWA/tab becomes visible
+  const handleVisibilityChange = () => {
+    if (
+      document.visibilityState ===
+      'visible'
+    ) {
+      refreshAdminData();
+    }
+  };
+
+  // Refresh when browser/app gets focus
+  const handleFocus = () => {
+    refreshAdminData();
+  };
+
+  document.addEventListener(
+    'visibilitychange',
+    handleVisibilityChange
+  );
+
+  window.addEventListener(
+    'focus',
+    handleFocus
+  );
+
+  return () => {
+    window.clearInterval(intervalId);
+
+    document.removeEventListener(
+      'visibilitychange',
+      handleVisibilityChange
+    );
+
+    window.removeEventListener(
+      'focus',
+      handleFocus
+    );
+  };
+}, [logged, sessionToken]);
+
+
+/*
+ * Automatically hide toast after 2.5 seconds.
+ */
+useEffect(() => {
+  if (!toast) {
+    return;
+  }
+
+  const id = setTimeout(
+    () => setToast(''),
+    2500
+  );
+
+  return () => clearTimeout(id);
+}, [toast]);
  const login=async()=>{setLoading(true);setError('');const {data:s,error:e}=await supabaseBrowser().auth.signInWithPassword({email:email.trim(),password});setLoading(false);if(e||!s.session){setError(e?.message||'Login failed');return}await load(s.session.access_token)};
  const logout=async()=>{await supabaseBrowser().auth.signOut();setLogged(false);setData(empty)};
  const customerMap=useMemo(()=>new Map(data.profiles.map(p=>[p.id,p])),[data.profiles]);
