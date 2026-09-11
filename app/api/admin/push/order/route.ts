@@ -21,10 +21,6 @@ function money(value: number) {
 
 export async function POST(req: NextRequest) {
   try {
-    // -------------------------------------------------------
-    // 1. VERIFY WEBHOOK SECRET
-    // -------------------------------------------------------
-
     const configuredSecret = process.env.ADMIN_PUSH_WEBHOOK_SECRET;
     const providedSecret = req.headers.get('x-gb-push-secret');
 
@@ -41,10 +37,6 @@ export async function POST(req: NextRequest) {
         { status: 401 }
       );
     }
-
-    // -------------------------------------------------------
-    // 2. READ ORDER
-    // -------------------------------------------------------
 
     const body = (await req.json()) as Partial<Payload>;
 
@@ -67,34 +59,20 @@ export async function POST(req: NextRequest) {
     const db = supabaseAdmin();
 
     const title = `New Order ${orderNumber}`;
-
     const notificationBody =
       `${customerName} · ${itemCount} items · ${money(totalAmount)}`;
 
-    // -------------------------------------------------------
-    // 3. CLAIM NOTIFICATION FIRST
-    //
-    // IMPORTANT:
-    // Supabase unique index prevents two simultaneous
-    // webhook calls from sending the same order twice.
-    // -------------------------------------------------------
-
+    // Claim first so duplicate webhook calls cannot send twice.
     const { data: notificationClaim, error: claimError } =
       await db
         .from('notification_logs')
         .insert({
           notification_type: 'new_order',
-
           title,
-
           body: notificationBody,
-
           order_id: orderId,
-
           provider: 'fcm',
-
           status: 'processing',
-
           metadata: {
             order_number: orderNumber,
             customer_name: customerName,
@@ -105,12 +83,7 @@ export async function POST(req: NextRequest) {
         .select('id')
         .single();
 
-    // -------------------------------------------------------
-    // DUPLICATE ORDER
-    // -------------------------------------------------------
-
     if (claimError) {
-      // PostgreSQL unique constraint violation
       if (claimError.code === '23505') {
         console.log(
           `Duplicate notification blocked: ${orderNumber}`
@@ -128,16 +101,10 @@ export async function POST(req: NextRequest) {
     }
 
     if (!notificationClaim?.id) {
-      throw new Error(
-        'Unable to create notification claim'
-      );
+      throw new Error('Unable to create notification claim');
     }
 
     const notificationLogId = notificationClaim.id;
-
-    // -------------------------------------------------------
-    // 4. GET ACTIVE ADMIN DEVICES
-    // -------------------------------------------------------
 
     const { data: devices, error: deviceError } =
       await db
@@ -157,10 +124,6 @@ export async function POST(req: NextRequest) {
       throw new Error(deviceError.message);
     }
 
-    // -------------------------------------------------------
-    // NO ACTIVE DEVICE
-    // -------------------------------------------------------
-
     if (!devices?.length) {
       await db
         .from('notification_logs')
@@ -175,14 +138,9 @@ export async function POST(req: NextRequest) {
         ok: false,
         sent: 0,
         failed: 0,
-        error:
-          'No active admin push devices registered',
+        error: 'No active admin push devices registered',
       });
     }
-
-    // -------------------------------------------------------
-    // 5. SEND FIREBASE PUSH
-    // -------------------------------------------------------
 
     const messaging = firebaseMessagingAdmin();
 
@@ -197,39 +155,34 @@ export async function POST(req: NextRequest) {
 
     for (const device of devices) {
       try {
-        const providerMessageId =
-          await messaging.send({
-            token: device.fcm_token,
+        const providerMessageId = await messaging.send({
+          token: device.fcm_token,
 
-            notification: {
-              title,
-              body: notificationBody,
-            },
+          // IMPORTANT:
+          // data-only payload.
+          // Service worker will display exactly one notification.
+          data: {
+            title,
+            body: notificationBody,
+            url: '/admin',
+            order_id: orderId,
+            order_number: orderNumber,
+            notification_type: 'new_order',
+          },
 
-            data: {
-              url: '/admin',
-              order_id: orderId,
-              order_number: orderNumber,
+          webpush: {
+            headers: {
+              Urgency: 'high',
             },
-
-            webpush: {
-              fcmOptions: {
-                link: '/admin',
-              },
-            },
-          });
+          },
+        });
 
         sent += 1;
 
         if (!firstSuccessfulMessageId) {
-          firstSuccessfulMessageId =
-            providerMessageId;
-
-          firstSuccessfulAdminId =
-            device.admin_user_id;
-
-          firstSuccessfulDeviceId =
-            device.id;
+          firstSuccessfulMessageId = providerMessageId;
+          firstSuccessfulAdminId = device.admin_user_id;
+          firstSuccessfulDeviceId = device.id;
         }
 
         console.log(
@@ -252,40 +205,23 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    // -------------------------------------------------------
-    // 6. UPDATE SINGLE NOTIFICATION LOG
-    // -------------------------------------------------------
-
     if (sent > 0) {
       await db
         .from('notification_logs')
         .update({
-          recipient_admin_id:
-            firstSuccessfulAdminId,
-
-          provider_message_id:
-            firstSuccessfulMessageId,
-
+          recipient_admin_id: firstSuccessfulAdminId,
+          provider_message_id: firstSuccessfulMessageId,
           status: 'sent',
-
           sent_at: new Date().toISOString(),
-
           error_message: null,
 
           metadata: {
-            device_id:
-              firstSuccessfulDeviceId,
-
+            device_id: firstSuccessfulDeviceId,
             order_number: orderNumber,
-
             customer_name: customerName,
-
             total_amount: totalAmount,
-
             item_count: itemCount,
-
             devices_sent: sent,
-
             devices_failed: failed,
           },
         })
@@ -295,31 +231,20 @@ export async function POST(req: NextRequest) {
         .from('notification_logs')
         .update({
           status: 'failed',
-
           error_message:
-            lastError ||
-            'Unable to send notification',
+            lastError || 'Unable to send notification',
 
           metadata: {
             order_number: orderNumber,
-
             customer_name: customerName,
-
             total_amount: totalAmount,
-
             item_count: itemCount,
-
             devices_sent: 0,
-
             devices_failed: failed,
           },
         })
         .eq('id', notificationLogId);
     }
-
-    // -------------------------------------------------------
-    // 7. RESPONSE
-    // -------------------------------------------------------
 
     return NextResponse.json({
       ok: sent > 0,
@@ -328,10 +253,7 @@ export async function POST(req: NextRequest) {
       failed,
     });
   } catch (error) {
-    console.error(
-      'NEW ORDER PUSH ERROR:',
-      error
-    );
+    console.error('NEW ORDER PUSH ERROR:', error);
 
     return NextResponse.json(
       {
