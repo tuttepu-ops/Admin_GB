@@ -596,6 +596,44 @@ Thank you for choosing Godavari Basket.`;
 }
 
 
+function shareBuyingList(
+  o: Order,
+  items: Item[]
+) {
+  const companyNumber = '919618851406';
+
+  const itemLines = items.length
+    ? items
+        .map((i, index) => {
+          const sku = i.sku
+            ? ` · ${i.sku}`
+            : '';
+
+          return `${index + 1}. ${i.product_name}${sku} — Qty ${i.quantity}`;
+        })
+        .join('\n')
+    : 'No items found for this order.';
+
+  const text = `Godavari Basket – Buying List
+
+Order: ${o.order_number}
+Customer: ${o.delivery_name}
+
+ITEMS TO BUY
+${itemLines}
+
+Total different items: ${items.length}`;
+
+  window.open(
+    `https://wa.me/${companyNumber}?text=${encodeURIComponent(
+      text
+    )}`,
+    '_blank',
+    'noopener,noreferrer'
+  );
+}
+
+
 function printAddress(
   o: Order
 ) {
@@ -3720,6 +3758,44 @@ function OrderModal({
 
             )
           )}
+
+          <div className="mini-actions">
+
+            <button
+              onClick={() =>
+                navigator.clipboard.writeText(
+                  items.length
+                    ? items
+                        .map((i, index) => {
+                          const sku = i.sku
+                            ? ` · ${i.sku}`
+                            : '';
+
+                          return `${index + 1}. ${i.product_name}${sku} — Qty ${i.quantity}`;
+                        })
+                        .join('\n')
+                    : 'No items found for this order.'
+                )
+              }
+            >
+              Copy buying list
+            </button>
+
+            <button
+              onClick={() =>
+                shareBuyingList(
+                  o,
+                  items
+                )
+              }
+            >
+              <MessageCircle
+                size={15}
+              />
+              Share buying list
+            </button>
+
+          </div>
 
         </div>
 
