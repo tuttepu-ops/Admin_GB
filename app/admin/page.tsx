@@ -596,6 +596,145 @@ Thank you for choosing Godavari Basket.`;
 }
 
 
+function orderMoney(
+  n: number
+) {
+  const value = Number(n || 0);
+
+  return `₹${value.toLocaleString('en-IN', {
+    minimumFractionDigits: Number.isInteger(value) ? 0 : 2,
+    maximumFractionDigits: 2,
+  })}`;
+}
+
+
+function fullOrderText(
+  o: Order,
+  items: Item[]
+) {
+  const orderDate = new Date(
+    o.created_at
+  ).toLocaleDateString(
+    'en-IN',
+    {
+      day: '2-digit',
+      month: 'short',
+      year: 'numeric',
+    }
+  );
+
+  const deliveryAddress = [
+    o.delivery_address_line1,
+    o.delivery_address_line2,
+    o.delivery_landmark
+      ? `Landmark: ${o.delivery_landmark}`
+      : '',
+    o.delivery_city,
+    o.delivery_state && o.delivery_pincode
+      ? `${o.delivery_state} - ${o.delivery_pincode}`
+      : o.delivery_state || o.delivery_pincode,
+  ]
+    .filter(Boolean)
+    .join(',\n');
+
+  const itemLines = items.length
+    ? items
+        .map((i, index) => {
+          const variant = i.sku || 'Item';
+          const qty = Number(i.quantity || 0);
+          const unitPrice = Number(i.unit_price || 0);
+          const lineTotal = Number(i.line_total || unitPrice * qty);
+
+          return `${index + 1}. ${i.product_name}
+   ${variant} × ${qty}
+   ${orderMoney(unitPrice)} × ${qty} = ${orderMoney(lineTotal)}`;
+        })
+        .join('\n\n')
+    : 'No items found for this order.';
+
+  const couponLine = o.coupon_code
+    ? `\nCoupon: ${o.coupon_code}\n`
+    : '';
+
+  return `🧺 GODAVARI BASKET
+ORDER DETAILS
+
+Order ID: ${o.order_number}
+Order Date: ${orderDate}
+Payment: ${o.payment_status ? o.payment_status.charAt(0).toUpperCase() + o.payment_status.slice(1) : '—'}
+Order Status: ${o.status ? o.status.charAt(0).toUpperCase() + o.status.slice(1) : '—'}
+
+CUSTOMER DETAILS
+Name: ${o.delivery_name || '—'}
+Mobile: ${o.delivery_mobile || '—'}
+Email: ${o.delivery_email || '—'}
+
+DELIVERY ADDRESS
+${deliveryAddress || '—'}
+
+ORDERED ITEMS
+
+${itemLines}
+
+--------------------------------
+Subtotal:        ${orderMoney(o.subtotal)}
+Discount:        ${orderMoney(o.discount_amount || 0)}
+Shipping:        ${orderMoney(o.shipping_amount || 0)}
+TOTAL:           ${orderMoney(o.total_amount)}
+--------------------------------
+${couponLine}
+CUSTOMER CONTACT
+📞 ${o.delivery_mobile || '—'}
+✉️ ${o.delivery_email || '—'}
+
+GODAVARI BASKET SUPPORT
+📞 9618851406
+🌐 godavaribasket.com`;
+}
+
+
+async function copyFullOrder(
+  o: Order,
+  items: Item[]
+) {
+  await navigator.clipboard.writeText(
+    fullOrderText(o, items)
+  );
+}
+
+
+async function shareFullOrder(
+  o: Order,
+  items: Item[]
+) {
+  const text = fullOrderText(
+    o,
+    items
+  );
+
+  if (navigator.share) {
+    try {
+      await navigator.share({
+        title: `Godavari Basket - ${o.order_number}`,
+        text,
+      });
+      return;
+    } catch (error) {
+      if (
+        error instanceof DOMException &&
+        error.name === 'AbortError'
+      ) {
+        return;
+      }
+    }
+  }
+
+  await navigator.clipboard.writeText(
+    text
+  );
+}
+
+
 function shareBuyingList(
   o: Order,
   items: Item[]
@@ -3793,6 +3932,35 @@ function OrderModal({
                 size={15}
               />
               Share buying list
+            </button>
+
+          </div>
+
+          <div className="mini-actions">
+
+            <button
+              onClick={() =>
+                copyFullOrder(
+                  o,
+                  items
+                )
+              }
+            >
+              Copy full order
+            </button>
+
+            <button
+              onClick={() =>
+                shareFullOrder(
+                  o,
+                  items
+                )
+              }
+            >
+              <MessageCircle
+                size={15}
+              />
+              Share full order
             </button>
 
           </div>
