@@ -1,3 +1,7 @@
+# Godavari Basket Admin — India + Abroad
+
+Start with **ABROAD-ADMIN-SETUP.md** for the region switch, SQL migration and rollout instructions.
+
 # Godavari Basket Admin v2
 
 Separate private operations dashboard for the Godavari Basket Supabase project.

@@ -51,6 +51,7 @@ self.addEventListener(
 
     const url =
       notificationData.url ||
+      notificationData.FCM_MSG?.data?.url ||
       '/admin';
 
     event.waitUntil(

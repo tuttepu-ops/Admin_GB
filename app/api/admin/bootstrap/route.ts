@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { requireAdmin } from "../../../../lib/admin-auth";
 import { supabaseAdmin } from "../../../../lib/supabase-server";
 
+import { normalizeAbroad, tagIndia, readAll } from "../../../../lib/abroad-admin";
+
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
 
@@ -200,16 +202,19 @@ export async function GET(req: NextRequest) {
       })
     );
 
-    console.log(
-      `[ADMIN BOOTSTRAP] Orders returned: ${
-        orders.data?.length || 0
-      }`
-    );
+    const domestic=tagIndia({profiles:enrichedProfiles,addresses:addresses.data || [],orders:orders.data || [],orderItems:items.data || [],payments:payments.data || [],coupons:coupons.data || [],influencers:influencers.data || [],pushDevices:devices.data || [],notificationLogs:logs.data || [],statusHistory:history.data || []});
+    const warnings:string[]=[];
+    let abroad:any={profiles:[],addresses:[],orders:[],orderItems:[],payments:[],coupons:[],influencers:[],pushDevices:[],notificationLogs:[],statusHistory:[]};
+    // An incomplete abroad setup must not disable the existing India dashboard.
+    try {
+      const [customers,abroadOrders]=await Promise.all([readAll(db,'abroad_customers'),readAll(db,'abroad_orders')]);
+      let abroadCoupons:any[]=[],abroadHistory:any[]=[];
+      for(const table of ['abroad_coupons','abroad_order_status_history']){try {const rows=await readAll(db,table);if(table==='abroad_coupons')abroadCoupons=rows;else abroadHistory=rows;}catch(e){warnings.push((e as Error).message);}}
+      abroad=normalizeAbroad(customers,abroadOrders,abroadCoupons,abroadHistory,authMap);
+      abroad.pushDevices=domestic.pushDevices;
+      try {abroad.notificationLogs=(await readAll(db,'abroad_notification_logs')).map(log=>({...log,region:'abroad'})).sort((a:any,b:any)=>String(b.created_at).localeCompare(String(a.created_at)));}catch(e){warnings.push((e as Error).message);}
 
-    console.log(
-      "[ADMIN BOOTSTRAP] Latest order:",
-      orders.data?.[0]?.order_number || "NONE"
-    );
+    } catch(e){warnings.push((e as Error).message);}
 
     return NextResponse.json(
       {
@@ -233,27 +238,10 @@ export async function GET(req: NextRequest) {
           role: who.admin.role,
         },
 
-        data: {
-          profiles: enrichedProfiles,
+        data: domestic,
+        abroadData: abroad,
+        warnings,
 
-          addresses: addresses.data || [],
-
-          orders: orders.data || [],
-
-          orderItems: items.data || [],
-
-          payments: payments.data || [],
-
-          coupons: coupons.data || [],
-
-          influencers: influencers.data || [],
-
-          pushDevices: devices.data || [],
-
-          notificationLogs: logs.data || [],
-
-          statusHistory: history.data || [],
-        },
       },
       {
         status: 200,

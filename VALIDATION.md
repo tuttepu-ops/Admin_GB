@@ -1,0 +1,1 @@
+Admin TypeScript and production build checked. 17 mocked tests cover region isolation, scoped mutations, authorization and notification delivery/retry behavior. No live Supabase/FCM or browser/device test was performed.

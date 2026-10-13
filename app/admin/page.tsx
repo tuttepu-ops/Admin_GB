@@ -36,10 +36,14 @@ import {
 
 import {
   getAdminPushToken,
+  listenAdminPush,
 } from '../../lib/firebase-browser';
 
 
+type Region = 'india' | 'abroad';
+type Scope = Region | 'all';
 type Profile = {
+  region?: Region;
   id: string;
 
   full_name:
@@ -73,6 +77,7 @@ type Profile = {
 
 
 type Address = {
+  region?: Region;
   id: string;
 
   user_id: string;
@@ -108,6 +113,12 @@ type Address = {
 
 
 type Order = {
+  region?: Region;
+  delivery_country?: string;
+  shipment_weight_kg?: number;
+  paypal_order_id?: string;
+  paypal_capture_id?: string;
+  checkout_method?: string;
   id: string;
 
   order_number: string;
@@ -179,6 +190,8 @@ type Order = {
 
 
 type Item = {
+  region?: Region;
+  currency?: string;
   id: string;
 
   order_id: string;
@@ -210,6 +223,7 @@ type Item = {
 
 
 type Payment = {
+  region?: Region;
   id: string;
 
   order_id: string;
@@ -239,6 +253,8 @@ type Payment = {
 
 
 type Coupon = {
+  region?: Region;
+  currency?: string;
   id: string;
 
   code: string;
@@ -324,6 +340,7 @@ type PushDevice = {
 
 
 type Log = {
+  region?: Region;
   id: string;
 
   notification_type: string;
@@ -413,19 +430,12 @@ const empty: Data = {
 };
 
 
-const money = (
-  n: number
-) =>
-  `₹${Number(
-    n || 0
-  ).toLocaleString(
-    'en-IN',
-    {
-      minimumFractionDigits: 2,
-      maximumFractionDigits: 2,
-    }
-  )}`;
-
+const money = (n:number,currency='INR') => new Intl.NumberFormat(currency==='INR'?'en-IN':'en-US',{style:'currency',currency,minimumFractionDigits:2}).format(Number(n || 0));
+const regionLabel=(region?:Region)=>region==='abroad'?'Abroad':'India';
+const totalsByCurrency=(orders:Order[],field:keyof Order='total_amount')=>{
+ const totals=new Map<string,number>();for(const o of orders){const currency=o.currency || 'INR';totals.set(currency,(totals.get(currency)||0)+Number(o[field] || 0));}
+ return [...totals].map(([currency,total])=>money(total,currency)).join(' · ') || '—';
+};
 
 const STORE_URL = (
   process.env
@@ -563,7 +573,7 @@ ${o.delivery_address_line1}${
       ? `\nLandmark: ${o.delivery_landmark}`
       : ''
   }
-${o.delivery_city}, ${o.delivery_state} - ${o.delivery_pincode}`;
+${o.delivery_city}, ${o.delivery_state} - ${o.delivery_pincode}${o.delivery_country ? `\n${o.delivery_country}` : ''}`;
 }
 
 
@@ -578,7 +588,8 @@ Your Godavari Basket order ${o.order_number} has been received.
 Delivery Address:
 ${addressText(o)}
 
-Order Total: ${money(o.total_amount)}
+Region: ${regionLabel(o.region)}
+Order Total: ${money(o.total_amount, o.currency)}
 Payment: ${o.payment_status.toUpperCase()}
 
 Thank you for choosing Godavari Basket.`;
@@ -596,17 +607,7 @@ Thank you for choosing Godavari Basket.`;
 }
 
 
-function orderMoney(
-  n: number
-) {
-  const value = Number(n || 0);
-
-  return `₹${value.toLocaleString('en-IN', {
-    minimumFractionDigits: Number.isInteger(value) ? 0 : 2,
-    maximumFractionDigits: 2,
-  })}`;
-}
-
+const orderMoney = money;
 
 function fullOrderText(
   o: Order,
@@ -630,6 +631,7 @@ function fullOrderText(
       ? `Landmark: ${o.delivery_landmark}`
       : '',
     o.delivery_city,
+    o.delivery_country,
     o.delivery_state && o.delivery_pincode
       ? `${o.delivery_state} - ${o.delivery_pincode}`
       : o.delivery_state || o.delivery_pincode,
@@ -647,7 +649,7 @@ function fullOrderText(
 
           return `${index + 1}. ${i.product_name}
    ${variant} × ${qty}
-   ${orderMoney(unitPrice)} × ${qty} = ${orderMoney(lineTotal)}`;
+   ${orderMoney(unitPrice,o.currency)} × ${qty} = ${orderMoney(lineTotal,o.currency)}`;
         })
         .join('\n\n')
     : 'No items found for this order.';
@@ -659,6 +661,7 @@ function fullOrderText(
   return `🧺 GODAVARI BASKET
 ORDER DETAILS
 
+Region: ${regionLabel(o.region)}
 Order ID: ${o.order_number}
 Order Date: ${orderDate}
 Payment: ${o.payment_status ? o.payment_status.charAt(0).toUpperCase() + o.payment_status.slice(1) : '—'}
@@ -677,10 +680,10 @@ ORDERED ITEMS
 ${itemLines}
 
 --------------------------------
-Subtotal:        ${orderMoney(o.subtotal)}
-Discount:        ${orderMoney(o.discount_amount || 0)}
-Shipping:        ${orderMoney(o.shipping_amount || 0)}
-TOTAL:           ${orderMoney(o.total_amount)}
+Subtotal:        ${orderMoney(o.subtotal, o.currency)}
+Discount:        ${orderMoney(o.discount_amount || 0, o.currency)}
+Shipping:        ${orderMoney(o.shipping_amount || 0, o.currency)}
+TOTAL:           ${orderMoney(o.total_amount, o.currency)}
 --------------------------------
 ${couponLine}
 CUSTOMER CONTACT
@@ -689,7 +692,7 @@ CUSTOMER CONTACT
 
 GODAVARI BASKET SUPPORT
 📞 9618851406
-🌐 godavaribasket.com`;
+🌐 ${o.region==='abroad'?'abroad.godavaribasket.com':'godavaribasket.com'}`;
 }
 
 
@@ -773,6 +776,8 @@ Total different items: ${items.length}`;
 }
 
 
+const escapeHtml=(value:unknown)=>String(value ?? '').replace(/[&<>"']/g,char=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[char]!));
+
 function printAddress(
   o: Order
 ) {
@@ -790,7 +795,7 @@ function printAddress(
   w.document.write(`
 <html>
 <head>
-<title>${o.order_number}</title>
+<title>${escapeHtml(o.order_number)}</title>
 
 <style>
 body {
@@ -817,17 +822,17 @@ Godavari Basket
 </h1>
 
 <p>
-DELIVERY ADDRESS · ${o.order_number}
+DELIVERY ADDRESS · ${escapeHtml(o.order_number)}
 </p>
 
 <div class="box">
 
 <h2>
-${o.delivery_name}
+${escapeHtml(o.delivery_name)}
 </h2>
 
 <p>
-${addressText(o).replaceAll(
+${escapeHtml(addressText(o)).replaceAll(
   '\n',
   '<br/>'
 )}
@@ -837,12 +842,12 @@ ${addressText(o).replaceAll(
 
 <p>
 <b>Payment:</b>
-${o.payment_status}
+${escapeHtml(o.payment_status)}
 </p>
 
 <p>
 <b>Total:</b>
-${money(o.total_amount)}
+${money(o.total_amount, o.currency)}
 </p>
 
 <script>
@@ -883,12 +888,19 @@ export default function Admin() {
     useState('');
 
   const [
-    data,
+    indiaData,
     setData,
   ] =
     useState<Data>(
       empty
     );
+
+  const [scope,setScope]=useState<Scope>('india');
+  useEffect(()=>{if(new URLSearchParams(window.location.search).get('region')==='abroad')setScope('abroad');},[]);
+  const [abroadData,setAbroadData]=useState<Data>(empty);
+  const [setupWarnings,setSetupWarnings]=useState<string[]>([]);
+  const data=useMemo<Data>(()=>scope==='india'?indiaData:scope==='abroad'?abroadData:Object.fromEntries(Object.keys(empty).map(key=>[key,(key==='pushDevices'?indiaData.pushDevices:[...indiaData[key as keyof Data],...abroadData[key as keyof Data]]).sort((a:any,b:any)=>String(b.created_at || '').localeCompare(String(a.created_at || '')))])) as Data,[scope,indiaData,abroadData]);
+  function switchScope(value:Scope){setScope(value);setSelected(null);setSelectedCustomer(null);clearOrderFilters();}
 
   const [
     admin,
@@ -1095,6 +1107,9 @@ export default function Admin() {
         setData(
           j.data
         );
+
+        setAbroadData(j.abroadData || empty);
+        setSetupWarnings(j.warnings || []);
 
         setAdmin(
           j.admin
@@ -1536,46 +1551,11 @@ export default function Admin() {
           data.profiles
             .length,
 
-        revenue:
-          paid.reduce(
-            (
-              a,
-              o
-            ) =>
-              a +
-              Number(
-                o.total_amount
-              ),
-            0
-          ),
+        revenue: totalsByCurrency(paid,'total_amount'),
 
-        discounts:
-          paid.reduce(
-            (
-              a,
-              o
-            ) =>
-              a +
-              Number(
-                o.discount_amount ||
-                  0
-              ),
-            0
-          ),
+        discounts: totalsByCurrency(paid,'discount_amount'),
 
-        commission:
-          paid.reduce(
-            (
-              a,
-              o
-            ) =>
-              a +
-              Number(
-                o.referral_commission_amount ||
-                  0
-              ),
-            0
-          ),
+        commission: totalsByCurrency(paid.filter(o=>o.region!=='abroad'),'referral_commission_amount'),
       };
     }, [data]);
 
@@ -1637,6 +1617,7 @@ export default function Admin() {
                 {
                   status:
                     s,
+                  region:o.region || 'india',
                 }
               ),
           }
@@ -1671,6 +1652,7 @@ export default function Admin() {
         | 'PATCH' =
         'POST'
     ) => {
+      if(scope==='all' && method==='POST'){setError('Choose India or Abroad before creating a coupon.');return;}
       const r =
         await fetch(
           '/api/admin/coupons',
@@ -1682,7 +1664,7 @@ export default function Admin() {
 
             body:
               JSON.stringify(
-                c
+                {...c,region:c.region || (scope==='abroad'?'abroad':'india')}
               ),
           }
         );
@@ -1847,13 +1829,23 @@ export default function Admin() {
     };
 
 
+  async function retryAbroadPush(){try{const response=await fetch('/api/admin/push/abroad-retry',{method:'POST',headers:authHeaders()});const result=await response.json();if(!response.ok)throw new Error(result.error || 'Retry failed');setToast(`Abroad alerts: ${result.completed} completed, ${result.failed} pending/failed`);await load();}catch(e){setError((e as Error).message);}}
+
+  useEffect(()=>{
+    if(!logged)return;
+    let active=true,stop:(()=>void)|undefined;
+    listenAdminPush((title,body,url)=>{if(!active)return;setToast(`${title}: ${body}`);void load();if(Notification.permission==='granted' && document.visibilityState==='visible'){const alert=new Notification(title,{body,tag:title});alert.onclick=()=>{alert.close();window.focus();const target=new URL(url,window.location.origin);if(target.origin===window.location.origin)window.location.assign(target.href);};}}).then(unsubscribe=>{if(active)stop=unsubscribe;else unsubscribe();}).catch(()=>{});
+    return ()=>{active=false;stop?.();};
+  },[logged,sessionToken]);
+
   const clearTable =
     async (
       table: string
     ) => {
+      if(scope!=='india'){setError('Data clearing is available only in India view. Abroad orders must be preserved for payment reconciliation.');return;}
       if (
         !confirm(
-          `Permanently delete all ${table}?`
+          `Permanently delete ${scope} ${table}?`
         )
       ) {
         return;
@@ -1873,6 +1865,7 @@ export default function Admin() {
               JSON.stringify(
                 {
                   table,
+                  region:scope,
 
                   confirm:
                     'DELETE',
@@ -2139,6 +2132,8 @@ export default function Admin() {
 
         <section className="content">
 
+          <div className="region-toolbar"><div><p className="eyebrow">BUSINESS VIEW</p><div className="region-switch" role="group" aria-label="Business region">{(['india','abroad','all'] as Scope[]).map(value=><button key={value} type="button" aria-pressed={scope===value} className={scope===value?'active':''} onClick={()=>switchScope(value)}>{value==='all'?'All regions':regionLabel(value)}</button>)}</div></div><p className="muted">{scope==='all'?'Combined view · Regions labeled · INR and USD kept separate':scope==='abroad'?'International orders · USD':'Domestic orders · INR'}</p></div>
+          {scope!=='india' && setupWarnings.length>0 && <div className="alert">Abroad setup needs attention: {setupWarnings.join(' · ')}</div>}
           <div className="content-head">
 
             <div>
@@ -2218,7 +2213,7 @@ export default function Admin() {
                 />
 
                 <Card
-                  label="Customers"
+                  label={scope==='all'?"Customer profiles":"Customers"}
                   value={
                     stats.customers
                   }
@@ -2226,23 +2221,17 @@ export default function Admin() {
 
                 <Card
                   label="Paid revenue"
-                  value={money(
-                    stats.revenue
-                  )}
+                  value={stats.revenue}
                 />
 
                 <Card
                   label="Discounts"
-                  value={money(
-                    stats.discounts
-                  )}
+                  value={stats.discounts}
                 />
 
                 <Card
                   label="Influencer commission"
-                  value={money(
-                    stats.commission
-                  )}
+                  value={stats.commission}
                 />
 
               </div>
@@ -2308,7 +2297,7 @@ export default function Admin() {
                           <div>
 
                             <b>
-                              {o.order_number}
+                              {o.order_number} <span className={`region-badge ${o.region || 'india'}`}>{regionLabel(o.region)}</span>
                             </b>
 
                             <span>
@@ -2330,9 +2319,7 @@ export default function Admin() {
                             </Status>
 
                             <b>
-                              {money(
-                                o.total_amount
-                              )}
+                              {money(o.total_amount, o.currency)}
                             </b>
 
                           </div>
@@ -2801,6 +2788,7 @@ export default function Admin() {
 
                           <div>
 
+                            <span className={`region-badge ${p.region || 'india'}`}>{regionLabel(p.region)}</span>
                             <b>
                               {p.full_name ||
                                 'Customer'}
@@ -2821,9 +2809,7 @@ export default function Admin() {
                                 customerOrders.length
                               }{' '}
                               orders ·{' '}
-                              {money(
-                                totalSpent
-                              )}
+                              {money(totalSpent, p.region==='abroad'?'USD':'INR')}
                             </small>
 
                           </div>
@@ -2921,9 +2907,7 @@ export default function Admin() {
                         </td>
 
                         <td>
-                          {money(
-                            p.amount
-                          )}
+                          {money(p.amount,p.currency)}
                         </td>
 
                         <td>
@@ -2963,7 +2947,7 @@ export default function Admin() {
           {tab ===
             'coupons' && (
 
-            <Coupons
+            <Coupons key={scope} scope={scope}
               coupons={
                 data.coupons
               }
@@ -2976,7 +2960,7 @@ export default function Admin() {
 
 
           {tab ===
-            'influencers' && (
+            'influencers' && scope!=='abroad' && (
 
             <Influencers
               rows={
@@ -3094,6 +3078,7 @@ export default function Admin() {
                   Notification log
                 </h2>
 
+                {scope!=='india' && <button type="button" className="primary compact" onClick={retryAbroadPush}>Retry pending abroad alerts</button>}
                 {data.notificationLogs
                   .slice(
                     0,
@@ -3114,9 +3099,7 @@ export default function Admin() {
                         <span>
 
                           <b>
-                            {
-                              n.title
-                            }
+                            {n.title || 'Abroad alert queued'} <span className={`region-badge ${n.region || 'india'}`}>{regionLabel(n.region)}</span>
                           </b>
 
                           <small>
@@ -3214,8 +3197,12 @@ export default function Admin() {
           )}
 
 
+          {scope==='all' && tab==='data' && <div className="panel"><h2>Choose a region</h2><p>Bulk clearing is disabled in All regions to prevent accidental deletion across businesses.</p></div>}
+          {scope==='all' && ['influencers'].includes(tab) && <p className="muted">These services currently contain India records only. Abroad checkout does not generate these records.</p>}
+          {scope==='abroad' && ['influencers','data'].includes(tab) && <div className="panel"><h2>{title}</h2><p>International referral commissions are not implemented in the abroad checkout. India records are kept separate. Abroad data clearing is disabled to preserve payment records.</p></div>}
+
           {tab ===
-            'data' && (
+            'data' && scope==='india' && (
 
             <div className="data-page">
 
@@ -3486,7 +3473,7 @@ function OrderCard({
 
         <div>
 
-          <div className="order-title">
+          <div className="order-title"><span className={`region-badge ${o.region || 'india'}`}>{regionLabel(o.region)}</span>
 
             <b>
               {
@@ -3519,9 +3506,7 @@ function OrderCard({
         </div>
 
         <b className="total">
-          {money(
-            o.total_amount
-          )}
+          {money(o.total_amount, o.currency)}
         </b>
 
       </div>
@@ -3538,6 +3523,7 @@ function OrderCard({
           <p>
             {o.delivery_address_line1}
             {', '}
+            {o.delivery_country && <>{o.delivery_country}{', '}</>}
             {o.delivery_city}
             {', '}
             {o.delivery_state}
@@ -3555,6 +3541,7 @@ function OrderCard({
           </h3>
 
           <p>
+            {o.region==='abroad' && <>PayPal order: {o.paypal_order_id || '—'}<br/>Capture: {o.paypal_capture_id || '—'}<br/></>}
             Coupon:{' '}
             {o.coupon_code ||
               '—'}
@@ -3566,10 +3553,8 @@ function OrderCard({
             <br/>
 
             Commission:{' '}
-            {money(
-              o.referral_commission_amount ||
-                0
-            )}
+            {money(o.referral_commission_amount ||
+                0, o.currency)}
           </p>
 
         </div>
@@ -3765,30 +3750,24 @@ function OrderModal({
             </h3>
 
             <p>
+              <span className={`region-badge ${o.region || 'india'}`}>{regionLabel(o.region)}</span><br/>
+              {o.region==='abroad' && <>Country: {o.delivery_country}<br/>Shipment: {o.shipment_weight_kg} kg<br/>Checkout: {o.checkout_method}<br/></>}
               Subtotal{' '}
-              {money(
-                o.subtotal
-              )}
+              {money(o.subtotal, o.currency)}
               <br/>
 
               Discount{' '}
-              {money(
-                o.discount_amount ||
-                  0
-              )}
+              {money(o.discount_amount ||
+                  0, o.currency)}
               <br/>
 
               Shipping{' '}
-              {money(
-                o.shipping_amount
-              )}
+              {money(o.shipping_amount, o.currency)}
               <br/>
 
               <b>
                 Total{' '}
-                {money(
-                  o.total_amount
-                )}
+                {money(o.total_amount, o.currency)}
               </b>
             </p>
 
@@ -3888,9 +3867,7 @@ function OrderModal({
                 </span>
 
                 <b>
-                  {money(
-                    i.line_total
-                  )}
+                  {money(i.line_total, o.currency)}
                 </b>
 
               </div>
@@ -3993,10 +3970,8 @@ function OrderModal({
             {' · '}
 
             Commission:{' '}
-            {money(
-              o.referral_commission_amount ||
-                0
-            )}
+            {money(o.referral_commission_amount ||
+                0, o.currency)}
           </p>
 
         </div>
@@ -4327,9 +4302,7 @@ function CustomerModal({
               <br/>
 
               <b>
-                {money(
-                  totalSpent
-                )}
+                {totalsByCurrency(paidOrders)}
               </b>
 
             </p>
@@ -4498,9 +4471,7 @@ function CustomerModal({
                       </Status>
 
                       <b>
-                        {money(
-                          o.total_amount
-                        )}
+                        {money(o.total_amount, o.currency)}
                       </b>
 
                     </div>
@@ -4569,9 +4540,11 @@ function CustomerModal({
 
 
 function Coupons({
+  scope,
   coupons,
   save,
 }: {
+  scope: Scope;
   coupons:
     Coupon[];
 
@@ -4593,15 +4566,15 @@ function Coupons({
   return (
     <div>
 
-      <div className="panel">
+      {scope!=='all' && <div className="panel">
 
         <p className="eyebrow">
           CREATE
         </p>
 
         <h2>
-          Coupon
-        </h2>
+          {scope==='abroad'?'Abroad coupon · USD':'India coupon · INR'}
+        </h2><p className="muted">5% off products only. Minimum: {scope==='abroad'?'$0':'₹1,000'}. Shipping is excluded.</p>
 
         <div className="filters">
 
@@ -4633,7 +4606,7 @@ function Coupons({
                     5,
 
                   minimum_order:
-                    1000,
+                    scope==='abroad'?0:1000,
 
                   active:
                     true,
@@ -4650,7 +4623,7 @@ function Coupons({
 
         </div>
 
-      </div>
+      </div>}
 
 
       <div className="panel-list">
@@ -4672,9 +4645,7 @@ function Coupons({
                 <div>
 
                   <b>
-                    {
-                      c.code
-                    }
+                    {c.code} · {regionLabel(c.region)}
                   </b>
 
                   <p>
@@ -4682,9 +4653,7 @@ function Coupons({
                       c.discount_percent
                     }
                     % off · Minimum{' '}
-                    {money(
-                      c.minimum_order
-                    )}
+                    {money(c.minimum_order,c.currency)}
                   </p>
 
                 </div>

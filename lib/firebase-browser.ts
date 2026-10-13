@@ -1,6 +1,6 @@
 'use client';
 import {getApp,getApps,initializeApp} from 'firebase/app';
-import {getMessaging,getToken,isSupported} from 'firebase/messaging';
+import {getMessaging,getToken,isSupported,onMessage} from 'firebase/messaging';
 export async function getAdminPushToken(){
  if(!(await isSupported())) throw new Error('Push notifications are not supported in this browser');
  const config={apiKey:process.env.NEXT_PUBLIC_FIREBASE_API_KEY,authDomain:process.env.NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN,projectId:process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID,storageBucket:process.env.NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET,messagingSenderId:process.env.NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID,appId:process.env.NEXT_PUBLIC_FIREBASE_APP_ID};
@@ -12,4 +12,13 @@ export async function getAdminPushToken(){
  const token=await getToken(getMessaging(app),{vapidKey:process.env.NEXT_PUBLIC_FIREBASE_VAPID_KEY,serviceWorkerRegistration:registration});
  if(!token) throw new Error('Unable to get FCM device token');
  return token;
+}
+
+// Listen while the dashboard is open; background delivery remains with the worker.
+export async function listenAdminPush(callback:(title:string,body:string,url:string)=>void){
+ if(!(await isSupported()))return ()=>{};
+ const config={apiKey:process.env.NEXT_PUBLIC_FIREBASE_API_KEY,authDomain:process.env.NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN,projectId:process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID,storageBucket:process.env.NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET,messagingSenderId:process.env.NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID,appId:process.env.NEXT_PUBLIC_FIREBASE_APP_ID};
+ if(!config.apiKey || !config.projectId)return ()=>{};
+ const app=getApps().length?getApp():initializeApp(config);
+ return onMessage(getMessaging(app),payload=>callback(payload.notification?.title || 'Godavari Basket',payload.notification?.body || '',payload.data?.url || '/admin'));
 }
